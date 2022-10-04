@@ -64,10 +64,40 @@ namespace TM2_Converter
             result.GsTexClut = br.ReadBytes(4);
             result.ImgData = br.ReadBytes(result.ImgDataLen);
             result.Palettes = new List<uint>();
-            for (int i = 0; i < result.ColorCount; i++)
+            if (result.Bpp == 4)
             {
-                uint color = br.ReadUInt32();
-                result.Palettes.Add(color);
+                for (int i = 0; i < result.ColorCount; i++)
+                {
+                    uint color = br.ReadUInt32();
+                    result.Palettes.Add(color);
+                }
+            } else if (result.Bpp == 5)
+            {
+                byte[] originalData = br.ReadBytes(result.PaletteLen);
+                List<byte> reved = new List<byte>();
+                int parts = result.PaletteLen / 128;
+                int stripes = 2;
+                int colors = 32;
+                int blocks = 2;
+                for (int part = 0; part < parts; part++)
+                {
+                    for (int block = 0; block < blocks; block++)
+                    {
+                        for (int stripe = 0; stripe < stripes; stripe++)
+                        {
+                            for (int color = 0; color < colors; color++)
+                            {
+                                reved.Add(originalData[part * colors * stripes * blocks + block * colors + stripe * stripes * colors + color]);
+                            }
+                        }
+                    }
+                }
+                BinaryReader brms = new BinaryReader(new MemoryStream(reved.ToArray()));
+                for (int i = 0; i < result.ColorCount; i++)
+                {
+                    uint color = brms.ReadUInt32();
+                    result.Palettes.Add(color);
+                }
             }
             return result;
         }
@@ -77,23 +107,33 @@ namespace TM2_Converter
             {
                 var br = new BinaryReader(stream);
                 var img = ReadTM2(ref br);
-                br.Close();
-                if (img.Bpp != 4) throw new Exception("Unsupported format.");
                 var result = new MemoryStream();
                 using (var bw = new BinaryWriter(result))
                 {
                     bw.Write(DDSHeader);
-                    foreach (var b in img.ImgData)
+                    if (img.Bpp == 4) //4bit
                     {
-                        var low = b & 0x0F;
-                        var high = b >> 4;
-                        bw.Write(img.Palettes[low]);
-                        bw.Write(img.Palettes[high]);
+                        foreach (var b in img.ImgData)
+                        {
+                            var low = b & 0x0F;
+                            var high = b >> 4;
+                            bw.Write(img.Palettes[low]);
+                            bw.Write(img.Palettes[high]);
+                        }
                     }
+                    else if (img.Bpp == 5) //8bit
+                    {
+                        foreach (byte b in img.ImgData)
+                        {
+                            bw.Write(img.Palettes[b]);
+                        }
+                    } 
+                    else throw new Exception("Unsupported format.");
                     bw.BaseStream.Seek(0xC, SeekOrigin.Begin);
                     bw.Write((int)img.ImgHeight);
                     bw.Write((int)img.ImgWidth);
                 }
+                br.Close();
                 return result.ToArray();
             }
         }
@@ -111,11 +151,11 @@ namespace TM2_Converter
                         bw.Write(br.ReadBytes(img.HeaderLen + 0x10));
                         using (var imgData = new MemoryStream())
                         {
-                            using (var bitBw = new BitHandle.BinaryWriter(imgData))
+                            if (img.Bpp == 4)
                             {
-                                using (var ddsStream = File.OpenRead(dds))
+                                using (var bitBw = new BitHandle.BinaryWriter(imgData))
                                 {
-                                    using (var ddsBr = new BinaryReader(ddsStream))
+                                    using (var ddsBr = new BinaryReader(File.OpenRead(dds)))
                                     {
                                         ddsBr.BaseStream.Position = 0x80;
                                         while (ddsBr.BaseStream.Position < ddsBr.BaseStream.Length)
@@ -127,7 +167,6 @@ namespace TM2_Converter
                                                 index = img.Palettes.Select((x, i) => new { Item = x, Index = i })
                                                     .Aggregate((x, y) => Math.Abs(x.Item - color) < Math.Abs(y.Item - color) ? x : y).Index;
                                                 if (img.Palettes[index] == 0 && color > img.Palettes.Max()) index = img.Palettes.IndexOf(img.Palettes.Max());
-                                                Console.WriteLine($"DDS Color: {color} - Closest TM2 Color: {img.Palettes[index]}");
                                             }
                                             var ba = new BitArray(new byte[] { (byte)index });
                                             for (int i = 0; i < 4; i++)
@@ -138,10 +177,34 @@ namespace TM2_Converter
                                     }
                                 }
                             }
+                            else if (img.Bpp == 5)
+                            {
+                                using (var dataBw = new BinaryWriter(imgData))
+                                {
+                                    using (var ddsBr = new BinaryReader(File.OpenRead(dds)))
+                                    {
+                                        ddsBr.BaseStream.Position = 0x80;
+                                        while (ddsBr.BaseStream.Position < ddsBr.BaseStream.Length)
+                                        {
+                                            var color = ddsBr.ReadUInt32();
+                                            var index = img.Palettes.FindIndex(x => x == color);
+                                            if (index < 0)
+                                            {
+                                                index = img.Palettes.Select((x, i) => new { Item = x, Index = i })
+                                                    .Aggregate((x, y) => Math.Abs(x.Item - color) < Math.Abs(y.Item - color) ? x : y).Index;
+                                                //if (img.Palettes[index] == 0 && color > img.Palettes.Max()) index = img.Palettes.IndexOf(img.Palettes.Max());
+                                                Console.WriteLine($"{color} - {img.Palettes[index]}");
+                                            }
+                                            dataBw.Write((byte)index);
+                                        }
+                                    }
+                                }
+                            }
+                            else throw new Exception("Unsupported format.");
                             bw.Write(imgData.ToArray());
                         }
-                        br.BaseStream.Position = br.BaseStream.Length - img.PaletteLen;
-                        bw.Write(br.ReadBytes(img.PaletteLen));
+                        br.BaseStream.Position = 0x10 + img.HeaderLen + img.ImgDataLen;
+                        bw.Write(br.ReadBytes((int)(br.BaseStream.Length - br.BaseStream.Position)));
                     }
                     br.Close();
                     return result.ToArray();
