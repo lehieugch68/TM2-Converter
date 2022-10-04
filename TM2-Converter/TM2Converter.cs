@@ -120,12 +120,14 @@ namespace TM2_Converter
                                         ddsBr.BaseStream.Position = 0x80;
                                         while (ddsBr.BaseStream.Position < ddsBr.BaseStream.Length)
                                         {
-                                            var pixel = ddsBr.ReadUInt32();
-                                            var index = img.Palettes.FindIndex(x => x == pixel);
+                                            var color = ddsBr.ReadUInt32();
+                                            var index = img.Palettes.FindIndex(x => x == color);
                                             if (index < 0)
                                             {
                                                 index = img.Palettes.Select((x, i) => new { Item = x, Index = i })
-                                                    .Aggregate((x, y) => Math.Abs(x.Item - pixel) < Math.Abs(y.Item - pixel) ? x : y).Index;
+                                                    .Aggregate((x, y) => Math.Abs(x.Item - color) < Math.Abs(y.Item - color) ? x : y).Index;
+                                                if (img.Palettes[index] == 0 && color > img.Palettes.Max()) index = img.Palettes.IndexOf(img.Palettes.Max());
+                                                Console.WriteLine($"DDS Color: {color} - Closest TM2 Color: {img.Palettes[index]}");
                                             }
                                             var ba = new BitArray(new byte[] { (byte)index });
                                             for (int i = 0; i < 4; i++)
