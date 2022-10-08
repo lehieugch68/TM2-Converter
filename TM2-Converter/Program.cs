@@ -19,17 +19,10 @@ namespace TM2_Converter
                 }
                 else if (Path.GetExtension(arg) == ".dds")
                 {
-                    try
-                    {
-                        string tm2path = Path.Combine(Path.GetDirectoryName(arg), Path.GetFileNameWithoutExtension(arg));
-                        byte[] data = TM2Converter.ToTM2(tm2path, arg);
-                        File.WriteAllBytes(tm2path, data);
-                    }
-                    catch (Exception e)
-                    {
-                        Console.WriteLine(e);
-                    }
-                }
+                    string tm2path = Path.Combine(Path.GetDirectoryName(arg), Path.GetFileNameWithoutExtension(arg));
+                    byte[] data = TM2Converter.ToTM2(tm2path, arg);
+                    File.WriteAllBytes(tm2path, data);
+                } 
             }
             Console.ReadKey();
         }

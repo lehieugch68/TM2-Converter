@@ -4,6 +4,8 @@ using System.Collections;
 using System.Linq;
 using System.Text;
 using System.IO;
+using System.Reflection;
+using System.Drawing;
 
 namespace TM2_Converter
 {
@@ -39,7 +41,43 @@ namespace TM2_Converter
             public byte[] GsRegs;
             public byte[] GsTexClut;
             public byte[] ImgData;
-            public List<uint> Palettes;
+            public List<RGBAColor> Palettes;
+        }
+        private struct RGBAColor
+        {
+            public byte R;
+            public byte G;
+            public byte B;
+            public byte A;
+            public byte[] ToBytes()
+            {
+                return new byte[] { this.R, this.G, this.B, this.A };
+            }
+            public bool Match(RGBAColor color)
+            {
+                return this.R == color.R 
+                    && this.B == color.B 
+                    && this.G == color.G 
+                    && this.A == color.A;
+            }
+            /*public bool Compare(RGBAColor orginal, RGBAColor other)
+            {
+                var a = new int[] { this.R, this.G, this.B, this.A };
+                var b = new int[] { other.R, other.G, other.B, other.A };
+                var c = new int[] { orginal.R, orginal.G, orginal.B, orginal.A };
+                return Utils.CosineSimilarity(a, c) >= Utils.CosineSimilarity(b, c);
+            }*/
+            public bool Compare(RGBAColor orginal, RGBAColor other)
+            {
+                var a = new int[] { this.R, this.G, this.B, this.A };
+                var b = new int[] { other.R, other.G, other.B, other.A };
+                var c = new int[] { orginal.R, orginal.G, orginal.B, orginal.A };
+                return Utils.EuclideanDistance(a, c) <= Utils.EuclideanDistance(b, c);
+            }
+            public uint ToUInt()
+            {
+                return BitConverter.ToUInt32(new byte[] { this.R, this.G, this.B, this.A }, 0);
+            }
         }
         private static TM2Image ReadTM2(ref BinaryReader br)
         {
@@ -63,12 +101,16 @@ namespace TM2_Converter
             result.GsRegs = br.ReadBytes(4);
             result.GsTexClut = br.ReadBytes(4);
             result.ImgData = br.ReadBytes(result.ImgDataLen);
-            result.Palettes = new List<uint>();
+            result.Palettes = new List<RGBAColor>();
             if (result.Bpp == 4)
             {
                 for (int i = 0; i < result.ColorCount; i++)
                 {
-                    uint color = br.ReadUInt32();
+                    var color = new RGBAColor();
+                    color.R = br.ReadByte();
+                    color.G = br.ReadByte();
+                    color.B = br.ReadByte();
+                    color.A = br.ReadByte();
                     result.Palettes.Add(color);
                 }
             } else if (result.Bpp == 5)
@@ -95,7 +137,11 @@ namespace TM2_Converter
                 BinaryReader brms = new BinaryReader(new MemoryStream(reved.ToArray()));
                 for (int i = 0; i < result.ColorCount; i++)
                 {
-                    uint color = brms.ReadUInt32();
+                    var color = new RGBAColor();
+                    color.R = brms.ReadByte();
+                    color.G = brms.ReadByte();
+                    color.B = brms.ReadByte();
+                    color.A = brms.ReadByte();
                     result.Palettes.Add(color);
                 }
             }
@@ -117,15 +163,15 @@ namespace TM2_Converter
                         {
                             var low = b & 0x0F;
                             var high = b >> 4;
-                            bw.Write(img.Palettes[low]);
-                            bw.Write(img.Palettes[high]);
+                            bw.Write(img.Palettes[low].ToBytes());
+                            bw.Write(img.Palettes[high].ToBytes());
                         }
                     }
                     else if (img.Bpp == 5) //8bit
                     {
                         foreach (byte b in img.ImgData)
                         {
-                            bw.Write(img.Palettes[b]);
+                            bw.Write(img.Palettes[b].ToBytes());
                         }
                     } 
                     else throw new Exception("Unsupported format.");
@@ -160,13 +206,18 @@ namespace TM2_Converter
                                         ddsBr.BaseStream.Position = 0x80;
                                         while (ddsBr.BaseStream.Position < ddsBr.BaseStream.Length)
                                         {
-                                            var color = ddsBr.ReadUInt32();
-                                            var index = img.Palettes.FindIndex(x => x == color);
+                                            var color = new RGBAColor();
+                                            color.R = ddsBr.ReadByte();
+                                            color.G = ddsBr.ReadByte();
+                                            color.B = ddsBr.ReadByte();
+                                            color.A = ddsBr.ReadByte();
+                                            var index = img.Palettes.FindIndex(x => x.Match(color) );
                                             if (index < 0)
                                             {
-                                                index = img.Palettes.Select((x, i) => new { Item = x, Index = i })
-                                                    .Aggregate((x, y) => Math.Abs(x.Item - color) < Math.Abs(y.Item - color) ? x : y).Index;
-                                                if (img.Palettes[index] == 0 && color > img.Palettes.Max()) index = img.Palettes.IndexOf(img.Palettes.Max());
+                                                index = img.Palettes.Select((x, i) => new { Color = x, Index = i })
+                                                    .Aggregate((x, y) => x.Color.Compare(color, y.Color) ? x : y).Index;
+                                                /*Console.WriteLine("New Color (RGBA): {0} - {1} - {2} - {3}", color.R, color.G, color.B, color.A);
+                                                Console.WriteLine("Nearest Color (RGBA): {0} - {1} - {2} - {3}\n", img.Palettes[index].R, img.Palettes[index].G, img.Palettes[index].B, img.Palettes[index].A);*/
                                             }
                                             var ba = new BitArray(new byte[] { (byte)index });
                                             for (int i = 0; i < 4; i++)
@@ -186,16 +237,21 @@ namespace TM2_Converter
                                         ddsBr.BaseStream.Position = 0x80;
                                         while (ddsBr.BaseStream.Position < ddsBr.BaseStream.Length)
                                         {
-                                            var color = ddsBr.ReadUInt32();
-                                            var index = img.Palettes.FindIndex(x => x == color);
+                                            var color = new RGBAColor();
+                                            color.R = ddsBr.ReadByte();
+                                            color.G = ddsBr.ReadByte();
+                                            color.B = ddsBr.ReadByte();
+                                            color.A = ddsBr.ReadByte();
+                                            var index = img.Palettes.FindIndex(x => x.Match(color));
                                             if (index < 0)
                                             {
-                                                index = img.Palettes.Select((x, i) => new { Item = x, Index = i })
-                                                    .Aggregate((x, y) => Math.Abs(x.Item - color) < Math.Abs(y.Item - color) ? x : y).Index;
-                                                //if (img.Palettes[index] == 0 && color > img.Palettes.Max()) index = img.Palettes.IndexOf(img.Palettes.Max());
-                                                Console.WriteLine($"{color} - {img.Palettes[index]}");
+                                                index = img.Palettes.Select((x, i) => new { Color = x, Index = i })
+                                                    .Aggregate((x, y) => x.Color.Compare(color, y.Color) ? x : y).Index;
+                                                /*Console.WriteLine("New Color (RGBA): {0} - {1} - {2} - {3}", color.R, color.G, color.B, color.A);
+                                                Console.WriteLine("Nearest Color (RGBA): {0} - {1} - {2} - {3}\n", img.Palettes[index].R, img.Palettes[index].G, img.Palettes[index].B, img.Palettes[index].A);*/
                                             }
                                             dataBw.Write((byte)index);
+                                            
                                         }
                                     }
                                 }
